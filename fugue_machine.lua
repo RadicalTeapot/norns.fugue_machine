@@ -2,8 +2,6 @@
 --
 -- TODO
 -- Draw something
--- Add seq values to params to be saved with pset
--- Split randomize seq and randomize playheads
 
 ---@type Param
 local param = include("lib/param")
@@ -38,19 +36,27 @@ local playheads = {
     {pos=1, use=true, reversed=false, clock_div=1, probability=1, octave_offset=0, channel=4, note_off_metro=metro.init(), active_notes={}},
 }
 
+local function set_steps_data(steps)
+    noteSeq.length = steps.length
+    for i,v in ipairs(steps.values) do
+        noteSeq.values[i] = v
+    end
+end
+
 local function generate_sequence()
-    print('generate sequence')
-    noteSeq.values = {}
+    local steps = {length=0, values={}}
     shiftSeq.values = {}
     for i=1,SEQ_LENGTH do
-        noteSeq.values[i] = math.random(math.floor(#notes / 2))
+        steps.values[i] = math.random()
         shiftSeq.values[i] = math.random(0, math.floor(#notes / 2) + 1)
     end
-    noteSeq.length = math.random(SEQ_LENGTH / 2, SEQ_LENGTH)
-    noteSeq.clock_div = math.random(4)
+    steps.length = math.random(SEQ_LENGTH / 2, SEQ_LENGTH)
     shiftSeq.length = math.random(SEQ_LENGTH / 8, SEQ_LENGTH)
     shiftSeq.clock_div = math.random(4, 16)
     shiftSeq.pos = 1
+
+    set_steps_data(steps)
+    param.set_steps_data(steps)
 end
 
 local function set_playhead_data(data)
@@ -66,7 +72,6 @@ local function set_playhead_data(data)
 end
 
 local function generate_playheads()
-    print('generate playheads')
     for i=1,#playheads do
         local clock_div = math.random(8)
         local data = {
@@ -82,7 +87,6 @@ local function generate_playheads()
 end
 
 local function playhead_all_notes_off(index)
-    -- print('All notes off on channel '..playheads[index].channel)
     for _, note in pairs(playheads[index].active_notes) do
         midi_device:note_off(note, nil, playheads[index].channel)
     end
@@ -95,31 +99,35 @@ local function all_notes_off()
     end
 end
 
+local function step_head(playhead_index, shiftAmount)
+    local head = playheads[playhead_index]
+    if head.use then
+        local new_pos = head.pos + 1/head.clock_div
+        local is_new_note = math.floor(head.pos) ~= math.floor(new_pos)
+        head.pos = new_pos
+        local index = util.wrap(math.floor(head.pos), 1, noteSeq.length)
+
+        if is_new_note and math.random() <= head.probability then
+            if head.reversed then index = #noteSeq.values - (index - 1) end
+            local note_index = util.clamp(math.floor(noteSeq.values[index] * #notes + 1), 1, #notes)
+            note_index = util.wrap(note_index + shiftAmount, 1, #notes)
+            local note_num = notes[note_index] + head.octave_offset * 12
+            midi_device:note_on(note_num, VELOCITY, head.channel)
+            table.insert(head.active_notes, note_num)
+            head.note_off_metro:start((60 / params:get("clock_tempo") / 4) * head.clock_div * GATE_LENGTH, 1)
+        end
+    end
+end
+
 local function step()
     while true do
         clock.sync(1/4)
         if midi_device ~= nil and running then
             shiftSeq.pos = util.wrap(shiftSeq.pos + 1/shiftSeq.clock_div, 1, shiftSeq.length)
-            local shiftAmnt = shiftSeq.values[math.floor(shiftSeq.pos)]
+            local shiftAmnount = shiftSeq.values[math.floor(shiftSeq.pos)]
 
             for i=1,#playheads do
-                local head = playheads[i]
-                if head.use then
-                    local new_pos = util.wrap(head.pos + 1/head.clock_div, 1, noteSeq.length);
-                    local is_new_note = math.floor(head.pos) ~= math.floor(new_pos)
-                    -- print(i..' '..head.pos..' '..new_pos)
-                    head.pos = new_pos
-
-                    if is_new_note and math.random() <= head.probability then
-                        local index = math.floor(head.pos)
-                        if head.reversed then index = #noteSeq.values - (index - 1) end
-                        local note_num = notes[noteSeq.values[math.floor(head.pos)] + shiftAmnt] + head.octave_offset * 12
-                        -- print('Midi note '..note_num..' to '..(head.channel))
-                        midi_device:note_on(note_num, VELOCITY, head.channel)
-                        table.insert(head.active_notes, note_num)
-                        head.note_off_metro:start((60 / params:get("clock_tempo") / 4) * head.clock_div * GATE_LENGTH, 1)
-                    end
-                end
+                step_head(i, shiftAmnount)
             end
         end
     end
@@ -128,8 +136,8 @@ end
 local function subscribe_param_events()
     local randomize_callbacks = {
         function() if midi_device ~= nil then all_notes_off() end end,
-        generate_sequence,
-        generate_playheads,
+        function(sequence, playheads) if sequence then generate_sequence() end end,
+        function(sequence, playheads) if playheads then generate_playheads() end end,
     }
     local running_callbacks = {
         function(state)
@@ -146,11 +154,14 @@ local function subscribe_param_events()
     local playhead_update_callbacks = {
         set_playhead_data
     }
-    param.subscribe(randomize_callbacks, running_callbacks, midi_connect_callbacks, playhead_update_callbacks)
+    local steps_update_callbacks = {
+        set_steps_data
+    }
+    param.subscribe(randomize_callbacks, running_callbacks, midi_connect_callbacks, playhead_update_callbacks, steps_update_callbacks)
 end
 
 function init()
-    param.set()
+    param.set(SEQ_LENGTH)
     subscribe_param_events()
 
     notes = {}

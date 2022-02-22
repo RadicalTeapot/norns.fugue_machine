@@ -11,6 +11,7 @@ local events = {
     running = event.new(),
     midi_connect = event.new(),
     update_playhead = event.new(),
+    update_steps = event.new(),
 }
 
 local function handle_midi_connect(index)
@@ -54,17 +55,46 @@ local function add_playhead_params(index)
     params:set_action("channelPlayhead"..index, update_playhead_action)
 end
 
-function Param.set()
-    params:add_trigger("randomize", "Randomize")
-    params:set_action("randomize", function() events.randomize:trigger() end)
+local function handle_steps_update(count)
+    local steps = {length=0, values={}}
+    steps.length = params:get("steps_length")
+    for i=1,count do
+        steps.values[i] = params:get("step"..i)
+    end
+    events.update_steps:trigger(steps)
+end
+
+local function add_steps_params(count)
+    params:add_group("Steps", count)
+    local step_update_action = function() handle_steps_update(count) end
+    local cs = controlspec.new(0,1,'lin',0.01,0)
+    for i=1,count do
+        params:add_control("step"..i, "Step "..i, cs:copy())
+        params:set_action("step"..i, step_update_action)
+    end
+end
+
+function Param.set(count)
+    params:add_separator("Fugue Machine")
+    params:add_trigger("randomize_all", "Randomize all")
+    params:set_action("randomize_all", function() events.randomize:trigger(true, true) end)
+    params:add_trigger("randomize_seq", "Random sequence")
+    params:set_action("randomize_seq", function() events.randomize:trigger(true, false) end)
+    params:add_trigger("randomize_playheads", "Random play heads")
+    params:set_action("randomize_playheads", function() events.randomize:trigger(false, true) end)
     params:add_binary("running", "Running", "toggle", 1)
     params:set_action("running", function(state) events.running:trigger(state) end)
     params:add_option("midi_device", "midi out device", midi_handler.get_midi_device_list(), 1)
     params:set_action("midi_device", handle_midi_connect)
 
+    params:add_separator("Playheads")
     for i=1,4 do
         add_playhead_params(i)
     end
+    params:add_separator("Steps")
+    params:add_number("steps_length", "Seq Length", 1, count, count / 2)
+    params:set_action("steps_length", function() handle_steps_update(count) end)
+    add_steps_params(count)
 end
 
 function Param.set_playhead_data(data)
@@ -77,7 +107,14 @@ function Param.set_playhead_data(data)
     params:set("channelPlayhead"..index, data.channel, true)
 end
 
-function Param.subscribe(randomize_callbacks, running_callbacks, midi_connect_callbacks, playhead_update_callbacks)
+function Param.set_steps_data(steps)
+    params:set("steps_length", steps.length, true)
+    for i,v in ipairs(steps.values) do
+        params:set("step"..i, v, true)
+    end
+end
+
+function Param.subscribe(randomize_callbacks, running_callbacks, midi_connect_callbacks, playhead_update_callbacks, steps_update_callbacks)
     for _,v in ipairs(randomize_callbacks) do
         events.randomize:subscribe(v)
     end
@@ -89,6 +126,9 @@ function Param.subscribe(randomize_callbacks, running_callbacks, midi_connect_ca
     end
     for _,v in ipairs(playhead_update_callbacks) do
         events.update_playhead:subscribe(v)
+    end
+    for _, v in ipairs(steps_update_callbacks) do
+        events.update_steps:subscribe(v)
     end
 end
 
