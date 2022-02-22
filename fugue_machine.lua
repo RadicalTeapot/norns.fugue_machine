@@ -24,7 +24,7 @@ local noteSeq = {
     length = SEQ_LENGTH,
 }
 local shiftSeq = {
-    value = {},
+    values = {},
     length = SEQ_LENGTH,
     clock_div = 1,
     pos=1
@@ -36,27 +36,40 @@ local playheads = {
     {pos=1, use=true, reversed=false, clock_div=1, probability=1, octave_offset=0, channel=4, note_off_metro=metro.init(), active_notes={}},
 }
 
-local function set_steps_data(steps)
-    noteSeq.length = steps.length
-    for i,v in ipairs(steps.values) do
+local function set_steps_data(data)
+    noteSeq.length = data.length
+    for i,v in ipairs(data.values) do
         noteSeq.values[i] = v
     end
 end
 
-local function generate_sequence()
-    local steps = {length=0, values={}}
-    shiftSeq.values = {}
-    for i=1,SEQ_LENGTH do
-        steps.values[i] = math.random()
-        shiftSeq.values[i] = math.random(0, math.floor(#notes / 2) + 1)
+local function set_shift_data(data)
+    shiftSeq.length = data.length
+    shiftSeq.clock_div = data.clock_div
+    for i,v in ipairs(data.values) do
+        shiftSeq.values[i] = v
     end
-    steps.length = math.random(SEQ_LENGTH / 2, SEQ_LENGTH)
-    shiftSeq.length = math.random(SEQ_LENGTH / 8, SEQ_LENGTH)
-    shiftSeq.clock_div = math.random(4, 16)
-    shiftSeq.pos = 1
+end
 
-    set_steps_data(steps)
-    param.set_steps_data(steps)
+local function generate_sequence()
+    local note_seq_data = {length=0, values={}}
+    note_seq_data.length = math.random(SEQ_LENGTH / 2, SEQ_LENGTH)
+
+    local shift_seq_data = {length=0, clock_div=0, values={}}
+    shift_seq_data.length = math.random(SEQ_LENGTH / 8, SEQ_LENGTH)
+    shift_seq_data.clock_div = math.random(4, 16)
+    -- Is resetting the pos needed ?
+    -- shiftSeq.pos = 1
+
+    for i=1,SEQ_LENGTH do
+        note_seq_data.values[i] = math.random()
+        shift_seq_data.values[i] = math.random()
+    end
+
+    set_steps_data(note_seq_data)
+    param.set_steps_data(note_seq_data)
+    set_shift_data(shift_seq_data)
+    param.set_shift_data(shift_seq_data)
 end
 
 local function set_playhead_data(data)
@@ -110,7 +123,8 @@ local function step_head(playhead_index, shiftAmount)
         if is_new_note and math.random() <= head.probability then
             if head.reversed then index = #noteSeq.values - (index - 1) end
             local note_index = util.clamp(math.floor(noteSeq.values[index] * #notes + 1), 1, #notes)
-            note_index = util.wrap(note_index + shiftAmount, 1, #notes)
+            local shift_index = util.clamp(math.floor(shiftAmount * #notes + 1), 1, #notes)
+            note_index = util.wrap(note_index + shift_index, 1, #notes)
             local note_num = notes[note_index] + head.octave_offset * 12
             midi_device:note_on(note_num, VELOCITY, head.channel)
             table.insert(head.active_notes, note_num)
@@ -134,30 +148,35 @@ local function step()
 end
 
 local function subscribe_param_events()
-    local randomize_callbacks = {
-        function() if midi_device ~= nil then all_notes_off() end end,
-        function(sequence, playheads) if sequence then generate_sequence() end end,
-        function(sequence, playheads) if playheads then generate_playheads() end end,
+    local callbacks = {
+        randomize= {
+            function() if midi_device ~= nil then all_notes_off() end end,
+            function(sequence, playheads) if sequence then generate_sequence() end end,
+            function(sequence, playheads) if playheads then generate_playheads() end end,
+        },
+        running= {
+            function(state)
+                running = state == 1
+                if not running then all_notes_off() end
+            end
+        },
+        midi_connect = {
+            function(device)
+                if midi_device ~= nil then all_notes_off() end
+                midi_device = device
+            end
+        },
+        playhead_update = {
+            set_playhead_data
+        },
+        steps_update = {
+            set_steps_data
+        },
+        shift_update = {
+            set_shift_data
+        }
     }
-    local running_callbacks = {
-        function(state)
-            running = state == 1
-            if not running then all_notes_off() end
-        end
-    }
-    local midi_connect_callbacks = {
-        function(device)
-            if midi_device ~= nil then all_notes_off() end
-            midi_device = device
-        end
-    }
-    local playhead_update_callbacks = {
-        set_playhead_data
-    }
-    local steps_update_callbacks = {
-        set_steps_data
-    }
-    param.subscribe(randomize_callbacks, running_callbacks, midi_connect_callbacks, playhead_update_callbacks, steps_update_callbacks)
+    param.subscribe(callbacks)
 end
 
 function init()

@@ -12,6 +12,7 @@ local events = {
     midi_connect = event.new(),
     update_playhead = event.new(),
     update_steps = event.new(),
+    update_shift = event.new(),
 }
 
 local function handle_midi_connect(index)
@@ -74,6 +75,16 @@ local function add_steps_params(count)
     end
 end
 
+local function handle_shift_update(count)
+    local data = {length=0, clock_div=0, values={}}
+    data.length = params:get("shift_length")
+    data.clock_div = params:get("shift_clock_div")
+    for i=1,count do
+        data.values[i] = params:get("shift_step"..i)
+    end
+    events.update_shift:trigger(data)
+end
+
 function Param.set(count)
     params:add_separator("Fugue Machine")
     params:add_trigger("randomize_all", "Randomize all")
@@ -91,10 +102,24 @@ function Param.set(count)
     for i=1,4 do
         add_playhead_params(i)
     end
+
     params:add_separator("Steps")
-    params:add_number("steps_length", "Seq Length", 1, count, count / 2)
+    params:add_number("steps_length", "Seq Length", 1, count, math.floor(count / 2))
     params:set_action("steps_length", function() handle_steps_update(count) end)
     add_steps_params(count)
+
+    params:add_separator("Note Shift")
+    local update_shift_data = function() handle_shift_update(count) end
+    params:add_number("shift_length", "Seq Length", 1, count, math.floor(count / 4))
+    params:set_action("shift_length", update_shift_data)
+    params:add_number("shift_clock_div", "Clock div", 1, 32, 8)
+    params:set_action("shift_clock_div", update_shift_data)
+    params:add_group("Steps", count)
+    local cs = controlspec.new(0,1,'lin',0.01,0)
+    for i=1,count do
+        params:add_control("shift_step"..i, "Step "..i, cs:copy())
+        params:set_action("shift_step"..i, update_shift_data)
+    end
 end
 
 function Param.set_playhead_data(data)
@@ -114,21 +139,32 @@ function Param.set_steps_data(steps)
     end
 end
 
-function Param.subscribe(randomize_callbacks, running_callbacks, midi_connect_callbacks, playhead_update_callbacks, steps_update_callbacks)
-    for _,v in ipairs(randomize_callbacks) do
+function Param.set_shift_data(data)
+    params:set("shift_length", data.length, true)
+    params:set("shift_clock_div", data.clock_div, true)
+    for i,v in ipairs(data.values) do
+        params:set("shift_step"..i, v, true)
+    end
+end
+
+function Param.subscribe(callbacks)
+    for _,v in ipairs(callbacks.randomize) do
         events.randomize:subscribe(v)
     end
-    for _,v in ipairs(running_callbacks) do
+    for _,v in ipairs(callbacks.running) do
         events.running:subscribe(v)
     end
-    for _,v in ipairs(midi_connect_callbacks) do
+    for _,v in ipairs(callbacks.midi_connect) do
         events.midi_connect:subscribe(v)
     end
-    for _,v in ipairs(playhead_update_callbacks) do
+    for _,v in ipairs(callbacks.playhead_update) do
         events.update_playhead:subscribe(v)
     end
-    for _, v in ipairs(steps_update_callbacks) do
+    for _, v in ipairs(callbacks.steps_update) do
         events.update_steps:subscribe(v)
+    end
+    for _, v in ipairs(callbacks.shift_update) do
+        events.update_shift:subscribe(v)
     end
 end
 
