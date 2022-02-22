@@ -19,11 +19,11 @@ local midi_device = nil
 local running = false
 local notes = {}
 
-local noteSeq = {
+local note_seq = {
     values = {},
     length = SEQ_LENGTH,
 }
-local shiftSeq = {
+local shift_seq = {
     values = {},
     length = SEQ_LENGTH,
     clock_div = 1,
@@ -37,17 +37,17 @@ local playheads = {
 }
 
 local function set_steps_data(data)
-    noteSeq.length = data.length
+    note_seq.length = data.length
     for i,v in ipairs(data.values) do
-        noteSeq.values[i] = v
+        note_seq.values[i] = v
     end
 end
 
 local function set_shift_data(data)
-    shiftSeq.length = data.length
-    shiftSeq.clock_div = data.clock_div
+    shift_seq.length = data.length
+    shift_seq.clock_div = data.clock_div
     for i,v in ipairs(data.values) do
-        shiftSeq.values[i] = v
+        shift_seq.values[i] = v
     end
 end
 
@@ -59,7 +59,7 @@ local function generate_sequence()
     shift_seq_data.length = math.random(SEQ_LENGTH / 8, SEQ_LENGTH)
     shift_seq_data.clock_div = math.random(4, 16)
     -- Is resetting the pos needed ?
-    -- shiftSeq.pos = 1
+    -- shift_seq.pos = 1
 
     for i=1,SEQ_LENGTH do
         note_seq_data.values[i] = math.random()
@@ -118,11 +118,11 @@ local function step_head(playhead_index, shiftAmount)
         local new_pos = head.pos + 1/head.clock_div
         local is_new_note = math.floor(head.pos) ~= math.floor(new_pos)
         head.pos = new_pos
-        local index = util.wrap(math.floor(head.pos), 1, noteSeq.length)
+        local index = util.wrap(math.floor(head.pos), 1, note_seq.length)
 
         if is_new_note and math.random() <= head.probability then
-            if head.reversed then index = #noteSeq.values - (index - 1) end
-            local note_index = util.clamp(math.floor(noteSeq.values[index] * #notes + 1), 1, #notes)
+            if head.reversed then index = #note_seq.values - (index - 1) end
+            local note_index = util.clamp(math.floor(note_seq.values[index] * #notes + 1), 1, #notes)
             local shift_index = util.clamp(math.floor(shiftAmount * #notes + 1), 1, #notes)
             note_index = util.wrap(note_index + shift_index, 1, #notes)
             local note_num = notes[note_index] + head.octave_offset * 12
@@ -137,8 +137,8 @@ local function step()
     while true do
         clock.sync(1/4)
         if midi_device ~= nil and running then
-            shiftSeq.pos = util.wrap(shiftSeq.pos + 1/shiftSeq.clock_div, 1, shiftSeq.length)
-            local shiftAmnount = shiftSeq.values[math.floor(shiftSeq.pos)]
+            shift_seq.pos = util.wrap(shift_seq.pos + 1/shift_seq.clock_div, 1, shift_seq.length)
+            local shiftAmnount = shift_seq.values[math.floor(shift_seq.pos)]
 
             for i=1,#playheads do
                 step_head(i, shiftAmnount)
